@@ -1,40 +1,47 @@
+/* eslint-disable no-restricted-imports */
+import Maps from '/maps.js';
+import { findCountryRequest, calcRoute } from './api.js';
+
+const MAXREQUESTLENGTH = 10;
+const JOINEDSYMBOL = '→';
+
 // Загрузка данных через await
-async function getDataAsync(url) {
-    // https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch
-    const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        redirect: 'follow',
-    });
+// async function getDataAsync(url) {
+//     // https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch
+//     const response = await fetch(url, {
+//         method: 'GET',
+//         headers: {
+//             'Content-Type': 'application/json',
+//         },
+//         redirect: 'follow',
+//     });
 
-    // При сетевой ошибке (мы оффлайн) из `fetch` вылетит эксцепшн.
-    // Тут мы даём ему просто вылететь из функции дальше наверх.
-    // Если же его нужно обработать, придётся обернуть в `try` и сам `fetch`:
-    //
-    // try {
-    //     response = await fetch(url, {...});
-    // } catch (error) {
-    //     // Что-то делаем
-    //     throw error;
-    // }
+//     // При сетевой ошибке (мы оффлайн) из `fetch` вылетит эксцепшн.
+//     // Тут мы даём ему просто вылететь из функции дальше наверх.
+//     // Если же его нужно обработать, придётся обернуть в `try` и сам `fetch`:
+//     //
+//     // try {
+//     //     response = await fetch(url, {...});
+//     // } catch (error) {
+//     //     // Что-то делаем
+//     //     throw error;
+//     // }
 
-    // Если мы тут, значит, запрос выполнился.
-    // Но там может быть 404, 500, и т.д., поэтому проверяем ответ.
-    if (response.ok) {
-        return response.json();
-    }
+//     // Если мы тут, значит, запрос выполнился.
+//     // Но там может быть 404, 500, и т.д., поэтому проверяем ответ.
+//     if (response.ok) {
+//         return response.json();
+//     }
 
-    // Пример кастомной ошибки (если нужно проставить какие-то поля
-    // для внешнего кода). Можно выкинуть и сам `response`, смотря
-    // какой у вас контракт. Главное перевести код в ветку `catch`.
-    const error = {
-        status: response.status,
-        customError: 'wtfAsync',
-    };
-    throw error;
-}
+//     // Пример кастомной ошибки (если нужно проставить какие-то поля
+//     // для внешнего кода). Можно выкинуть и сам `response`, смотря
+//     // какой у вас контракт. Главное перевести код в ветку `catch`.
+//     const error = {
+//         status: response.status,
+//         customError: 'wtfAsync',
+//     };
+//     throw error;
+// }
 
 // Загрузка данных через промисы (то же самое что `getDataAsync`)
 function getDataPromise(url) {
@@ -77,14 +84,17 @@ function getDataPromise(url) {
 }
 
 // Две функции просто для примера, выберите с await или promise, какая нравится
-const getData = getDataAsync || getDataPromise;
+const getData = getDataPromise;
+// getDataAsync ||
 
 async function loadCountriesData() {
     let countries = [];
     try {
         // ПРОВЕРКА ОШИБКИ №1: ломаем этот урл, заменяя all на allolo,
         // получаем кастомную ошибку.
-        countries = await getData('https://restcountries.com/v3.1/all?fields=name&fields=cca3&fields=area');
+        countries = await getData(
+            'https://restcountries.com/v3.1/all?fields=name&fields=cca3&fields=borders&fields=area'
+        );
     } catch (error) {
         // console.log('catch for getData');
         // console.error(error);
@@ -135,10 +145,55 @@ const output = document.getElementById('output');
     toCountry.disabled = false;
     submit.disabled = false;
 
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('submit', async (event) => {
         event.preventDefault();
+
+        fromCountry.disabled = true;
+        toCountry.disabled = true;
+        submit.disabled = true;
         // TODO: Вывести, откуда и куда едем, и что идёт расчёт.
-        // TODO: Рассчитать маршрут из одной страны в другую за минимум запросов.
-        // TODO: Вывести маршрут и общее количество запросов.
+        const fromRequest = await findCountryRequest(fromCountry.value, Object.values(countriesData));
+        const toRequest = await findCountryRequest(toCountry.value, Object.values(countriesData));
+        if (fromCountry.value === toCountry.value) {
+            output.textContent = 'Need to choose different countries. This is the same country';
+        } else if (fromRequest && toRequest) {
+            output.textContent = 'Calculating...';
+            Maps.setEndPoints(fromRequest.cca3, toRequest.cca3);
+            // TODO: Рассчитать маршрут из одной страны в другую за минимум запросов.
+            const { paths, countRequests } = await calcRoute(fromRequest, toRequest, Object.values(countriesData));
+            output.textContent = '';
+            // TODO: Вывести маршрут и общее количество запросов.
+            if (paths.length > 0 && paths[0].length < MAXREQUESTLENGTH) {
+                const filteredPaths = paths.filter((path) => path.length < MAXREQUESTLENGTH);
+                filteredPaths.forEach((path) => {
+                    Maps.markAsVisited(path.map((country) => country.cca3));
+                });
+                const htmlPaths = filteredPaths.map((path) => {
+                    return path
+                        .map((country) => {
+                            return country.name.common;
+                        })
+                        .join(JOINEDSYMBOL);
+                });
+
+                output.innerHTML = `
+            <p>Finded paths:</p>
+            ${htmlPaths.map((path) => `<p>${path}</p>`).join('')}
+            <p>Count of requests: ${countRequests}</p>
+            `;
+            } else if (paths.length === 0) {
+                output.textContent = 'No paths. This is island/water';
+            } else {
+                output.textContent = 'Too long path. Choose other countries';
+            }
+        } else {
+            output.textContent = 'Need to choose countries';
+        }
+
+        fromCountry.disabled = false;
+        toCountry.disabled = false;
+        submit.disabled = false;
+
+        form.reset();
     });
 })();
